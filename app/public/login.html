@@ -1,0 +1,34 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Exam Portal — Sign in</title><link rel="stylesheet" href="/style.css">
+<style>.box{max-width:380px;margin:9vh auto}</style></head><body>
+<div class="box">
+  <div class="panel">
+    <h2>Exam Portal</h2>
+    <p class="muted">Sign in with the username and password your admin gave you.</p>
+    <label class="field"><span>Username</span><input id="u" autocomplete="username" autofocus></label>
+    <label class="field"><span>Password</span><input id="p" type="password" autocomplete="current-password"></label>
+    <button class="primary" style="width:100%" id="go">Sign in</button>
+    <p id="demoHint" class="muted" style="margin-top:14px;display:none"></p>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const toast=(m,err)=>{const t=document.getElementById('toast');t.textContent=m;t.className='toast show'+(err?' err':'');setTimeout(()=>t.className='toast',2600)};
+async function login(){
+  const r=await fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({username:document.getElementById('u').value,password:document.getElementById('p').value})});
+  const d=await r.json();
+  if(!r.ok) return toast(d.error,true);
+  location.href = d.role==='ADMIN' ? '/admin.html' : '/student.html';
+}
+document.getElementById('go').onclick=login;
+document.addEventListener('keydown',e=>{if(e.key==='Enter')login()});
+fetch('/api/login-config').then(r=>r.ok?r.json():null).then(c=>{
+  if(!c || !c.showDemoHint) return;
+  const el=document.getElementById('demoHint');
+  el.style.display='block';
+  el.textContent=`Sample usernames: Admin = ${c.adminUsername} · Student = ${c.studentUsername}. Passwords are configured in app/.env.`;
+}).catch(()=>{});
+fetch('/api/me').then(r=>r.ok?r.json():null).then(d=>{if(d)location.href=d.role==='ADMIN'?'/admin.html':'/student.html'});
+</script></body></html>

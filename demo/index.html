@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Exam Portal — Demo</title>
+<style>
+  :root {
+    --bg: #f1f5f9; --panel: #ffffff; --ink: #0f172a; --muted: #64748b;
+    --line: #e2e8f0; --brand: #1d4ed8; --brand-ink: #ffffff;
+    --answered: #16a34a; --marked: #7c3aed; --notanswered: #dc2626; --notvisited: #cbd5e1;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 12px 20px;
+           display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; flex: 1; }
+  .timer { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 20px;
+           background: #0f172a; color: #fff; padding: 6px 14px; border-radius: 8px; }
+  .timer.warn { background: var(--notanswered); }
+  .wrap { display: grid; grid-template-columns: 1fr 300px; gap: 16px; padding: 16px; align-items: start; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tab { border: 1px solid var(--line); background: #fff; padding: 7px 14px; border-radius: 999px;
+         cursor: pointer; font-size: 13px; }
+  .tab.active { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
+  .qmeta { color: var(--muted); font-size: 13px; display: flex; gap: 14px; margin-bottom: 10px; flex-wrap: wrap; }
+  .qtext { font-size: 17px; line-height: 1.55; margin-bottom: 18px; }
+  label.opt { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line);
+              border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; cursor: pointer; }
+  label.opt:hover { border-color: var(--brand); }
+  label.opt.sel { border-color: var(--brand); background: #eff6ff; }
+  input[type=number] { font-size: 16px; padding: 10px 12px; border: 1px solid var(--line);
+                       border-radius: 8px; width: 220px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+  button { font: inherit; border-radius: 8px; padding: 9px 16px; border: 1px solid var(--line);
+           background: #fff; cursor: pointer; }
+  button.primary { background: var(--brand); color: #fff; border-color: var(--brand); }
+  button.ghost { background: #f8fafc; }
+  button.danger { background: var(--notanswered); color: #fff; border-color: var(--notanswered); }
+  .palette { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 10px 0 16px; }
+  .pal { aspect-ratio: 1; border-radius: 8px; border: none; color: #fff; font-weight: 600;
+         background: var(--notvisited); color: #334155; }
+  .pal.ANSWERED { background: var(--answered); color: #fff; }
+  .pal.NOT_ANSWERED { background: var(--notanswered); color: #fff; }
+  .pal.MARKED_FOR_REVIEW, .pal.ANSWERED_AND_MARKED { background: var(--marked); color: #fff; }
+  .pal.current { outline: 3px solid #0f172a; outline-offset: 2px; }
+  .legend { font-size: 12px; color: var(--muted); display: grid; gap: 6px; }
+  .legend span::before { content: ""; display: inline-block; width: 11px; height: 11px;
+                         border-radius: 3px; margin-right: 8px; vertical-align: middle; }
+  .l1::before { background: var(--answered); } .l2::before { background: var(--notanswered); }
+  .l3::before { background: var(--marked); } .l4::before { background: var(--notvisited); }
+  .center { max-width: 640px; margin: 60px auto; text-align: center; }
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  .score { font-size: 42px; font-weight: 700; }
+  .pill { font-size: 12px; padding: 3px 9px; border-radius: 999px; }
+  .CORRECT { background: #dcfce7; color: #166534; } .INCORRECT { background: #fee2e2; color: #991b1b; }
+  .PARTIAL { background: #fef3c7; color: #92400e; } .UNATTEMPTED { background: #e2e8f0; color: #475569; }
+  dialog { border: none; border-radius: 12px; padding: 24px; max-width: 420px; }
+  dialog::backdrop { background: rgba(15,23,42,.5); }
+  @media (max-width: 860px) { .wrap { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Exam Portal — Demo</h1>
+  <div class="timer" id="timer">--:--</div>
+</header>
+
+<div id="app"></div>
+
+<dialog id="confirm">
+  <h3 style="margin-top:0">Submit the exam?</h3>
+  <p id="confirmText" style="color:#64748b"></p>
+  <div class="actions" style="justify-content:flex-end">
+    <button onclick="document.getElementById('confirm').close()">Cancel</button>
+    <button class="primary" id="confirmYes">Yes, submit</button>
+  </div>
+</dialog>
+
+<script>
+const api = (p, opts) => fetch(p, { headers: { 'content-type': 'application/json' }, ...opts }).then(r => r.json());
+let S = null, current = 0, section = null, ticker = null;
+
+const app = document.getElementById('app');
+const timerEl = document.getElementById('timer');
+
+function fmt(sec) {
+  const m = String(Math.floor(sec / 60)).padStart(2, '0');
+  const s = String(sec % 60).padStart(2, '0');
+  return m + ':' + s;
+}
+
+function startScreen() {
+  app.innerHTML = `<div class="center panel">
+    <h2>JEE-style Mock Test</h2>
+    <p style="color:#64748b">5 questions · 3 sections · 10 minutes. The timer runs on the server,
+    so refreshing the page does not give you extra time — your answers come back exactly as you left them.</p>
+    <button class="primary" onclick="start()">Start exam</button>
+    <p style="color:#94a3b8;font-size:13px">Tip: reload the page mid-exam to see state restore.</p>
+  </div>`;
+}
+
+async function start() {
+  S = await api('/api/start', { method: 'POST' });
+  localStorage.setItem('attemptId', S.attempt.id);
+  section = S.exam.sections[0].id;
+  current = 0;
+  render();
+}
+
+async function resume(id) {
+  const state = await api('/api/attempts/' + id);
+  if (state.error) { localStorage.removeItem('attemptId'); return startScreen(); }
+  S = state;
+  section = S.exam.sections[0].id;
+  render();
+}
+
+function visible() { return S.questions.filter(q => q.sectionId === section); }
+
+async function save(patch) {
+  const q = visible()[current];
+  const res = await api('/api/attempts/' + S.attempt.id + '/answer', {
+    method: 'POST', body: JSON.stringify({ questionId: q.id, ...patch }),
+  });
+  if (res.error) return refresh();
+  Object.assign(q.answer, { status: res.status, selectedOptionIds: res.selectedOptionIds, numericAnswer: res.numericAnswer });
+  render();
+}
+
+function pick(optionId) {
+  const q = visible()[current];
+  if (q.type === 'MULTIPLE_CORRECT') {
+    const set = new Set(q.answer.selectedOptionIds);
+    set.has(optionId) ? set.delete(optionId) : set.add(optionId);
+    save({ selectedOptionIds: [...set] });
+  } else {
+    save({ selectedOptionIds: [optionId] });
+  }
+}
+
+async function refresh() {
+  const state = await api('/api/attempts/' + S.attempt.id);
+  S = state;
+  if (S.result) return showResult();
+  render();
+}
+
+function go(i) {
+  current = i;
+  const q = visible()[current];
+  api('/api/attempts/' + S.attempt.id + '/visit', { method: 'POST', body: JSON.stringify({ questionId: q.id }) });
+  if (q.answer.status === 'NOT_VISITED') q.answer.status = 'NOT_ANSWERED';
+  render();
+}
+
+function switchSection(id) { section = id; current = 0; render(); }
+
+function render() {
+  if (S.result) return showResult();
+  const qs = visible();
+  const q = qs[current];
+  document.getElementById('title').textContent = S.exam.title;
+
+  app.innerHTML = `
+  <div class="wrap">
+    <div class="panel">
+      <div class="tabs">
+        ${S.exam.sections.map(s => `<button class="tab ${s.id === section ? 'active' : ''}"
+          onclick="switchSection('${s.id}')">${s.name}</button>`).join('')}
+      </div>
+      <div class="qmeta">
+        <span>Question ${current + 1} of ${qs.length}</span>
+        <span>+${q.marks} correct</span>
+        <span>−${q.negativeMarks} wrong</span>
+        <span>${q.type.replace(/_/g, ' ').toLowerCase()}</span>
+      </div>
+      <div class="qtext">${q.text}</div>
+      ${q.type === 'NUMERICAL'
+        ? `<input type="number" step="any" id="numeric" placeholder="Type your answer"
+             value="${q.answer.numericAnswer ?? ''}"
+             onchange="save({ numericAnswer: this.value === '' ? null : Number(this.value) })" />`
+        : q.options.map(o => `<label class="opt ${q.answer.selectedOptionIds.includes(o.id) ? 'sel' : ''}">
+             <input type="${q.type === 'MULTIPLE_CORRECT' ? 'checkbox' : 'radio'}" name="opt"
+               ${q.answer.selectedOptionIds.includes(o.id) ? 'checked' : ''}
+               onchange="pick('${o.id}')" />
+             <span><b>${o.label}.</b> ${o.text}</span></label>`).join('')}
+      <div class="actions">
+        <button class="ghost" onclick="save({ clear: true })">Clear response</button>
+        <button class="ghost" onclick="save({ markedForReview: true })">Mark for review</button>
+        <button ${current === 0 ? 'disabled' : ''} onclick="go(${current - 1})">Previous</button>
+        <button class="primary" ${current === qs.length - 1 ? 'disabled' : ''} onclick="go(${current + 1})">Save & Next</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <b style="font-size:14px">Question palette</b>
+      <div class="palette">
+        ${qs.map((item, i) => `<button class="pal ${item.answer.status} ${i === current ? 'current' : ''}"
+           onclick="go(${i})">${i + 1}</button>`).join('')}
+      </div>
+      <div class="legend">
+        <span class="l1">Answered</span>
+        <span class="l2">Not answered</span>
+        <span class="l3">Marked for review</span>
+        <span class="l4">Not visited</span>
+      </div>
+      <button class="danger" style="width:100%;margin-top:16px" onclick="askSubmit()">Submit exam</button>
+    </div>
+  </div>`;
+
+  if (!ticker) ticker = setInterval(tick, 1000);
+  paintTimer();
+}
+
+function paintTimer() {
+  const left = S.attempt.remainingSeconds;
+  timerEl.textContent = fmt(Math.max(0, left));
+  timerEl.classList.toggle('warn', left <= 60);
+}
+
+let sync = 0;
+async function tick() {
+  if (!S || S.result) return;
+  S.attempt.remainingSeconds = Math.max(0, S.attempt.remainingSeconds - 1);
+  paintTimer();
+  // Re-sync with the server every 15 s; the server clock is the real one.
+  if (++sync % 15 === 0 || S.attempt.remainingSeconds === 0) await refresh();
+}
+
+function askSubmit() {
+  const qs = S.questions;
+  const answered = qs.filter(q => q.answer.status.startsWith('ANSWERED')).length;
+  document.getElementById('confirmText').textContent =
+    `${answered} answered, ${qs.length - answered} left. You cannot return after submitting.`;
+  document.getElementById('confirm').showModal();
+}
+
+document.getElementById('confirmYes').onclick = async () => {
+  document.getElementById('confirm').close();
+  const res = await api('/api/attempts/' + S.attempt.id + '/submit', { method: 'POST' });
+  S = res;
+  showResult();
+};
+
+function showResult() {
+  clearInterval(ticker); ticker = null;
+  localStorage.removeItem('attemptId');
+  timerEl.textContent = '--:--';
+  const r = S.result;
+  app.innerHTML = `
+  <div class="wrap" style="grid-template-columns:1fr">
+    <div class="panel">
+      <p style="color:#64748b;margin:0">${r.status === 'AUTO_SUBMITTED' ? 'Time expired — submitted automatically' : 'Submitted'}</p>
+      <div class="score">${r.marksObtained} <span style="font-size:20px;color:#64748b">/ ${r.totalMarks}</span></div>
+      <p style="color:#64748b">${r.percentage}% · ${r.correctCount} correct · ${r.incorrectCount} wrong ·
+         ${r.unattemptedCount} unattempted · −${r.negativeMarks} negative</p>
+
+      <h3>Section-wise</h3>
+      <table><tr><th>Section</th><th>Score</th><th>Correct</th><th>Wrong</th><th>Left</th></tr>
+        ${r.sectionBreakdown.map(s => `<tr><td>${s.name}</td><td>${s.obtained} / ${s.total}</td>
+          <td>${s.correct}</td><td>${s.incorrect}</td><td>${s.unattempted}</td></tr>`).join('')}
+      </table>
+
+      <h3>Solutions</h3>
+      <table><tr><th>Question</th><th>Result</th><th>Answer</th><th>Explanation</th></tr>
+        ${r.review.map(x => `<tr><td>${x.text}</td>
+          <td><span class="pill ${x.verdict}">${x.verdict.toLowerCase()}</span> ${x.awarded}</td>
+          <td>${x.correctAnswer}</td><td style="color:#64748b">${x.explanation}</td></tr>`).join('')}
+      </table>
+
+      <div class="actions"><button class="primary" onclick="location.reload()">Take it again</button></div>
+    </div>
+  </div>`;
+}
+
+const saved = localStorage.getItem('attemptId');
+saved ? resume(saved) : startScreen();
+</script>
+</body>
+</html>

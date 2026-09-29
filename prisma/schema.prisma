@@ -1,0 +1,588 @@
+// Online Examination Portal — data model
+// PostgreSQL + Prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- enums
+
+enum Role {
+  ADMIN
+  STAFF
+  STUDENT
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  BLOCKED
+}
+
+enum TokenType {
+  EMAIL_VERIFY
+  MOBILE_VERIFY
+  PASSWORD_RESET
+}
+
+enum QuestionType {
+  SINGLE_CORRECT
+  MULTIPLE_CORRECT
+  NUMERICAL
+  TRUE_FALSE
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum QuestionStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ExamStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  AUTO_SUBMITTED
+  EXPIRED
+}
+
+enum AnswerStatus {
+  NOT_VISITED
+  NOT_ANSWERED
+  ANSWERED
+  MARKED_FOR_REVIEW
+  ANSWERED_AND_MARKED
+}
+
+enum NotificationAudience {
+  ALL
+  EXAM
+  BATCH
+  USER
+}
+
+enum PaymentStatus {
+  CREATED
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum EnrollmentSource {
+  FREE
+  PAID
+  ADMIN_GRANT
+}
+
+// ---------------------------------------------------------------- identity
+
+model User {
+  id               String     @id @default(cuid())
+  email            String     @unique
+  mobile           String?    @unique
+  passwordHash     String
+  role             Role       @default(STUDENT)
+  status           UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt  DateTime?
+  mobileVerifiedAt DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  studentProfile StudentProfile?
+  adminProfile   AdminProfile?
+  sessions       Session[]
+  tokens         VerificationToken[]
+  attempts       ExamAttempt[]
+  results        Result[]
+  rankings       Ranking[]
+  enrollments    ExamEnrollment[]
+  payments       Payment[]
+  notifications  NotificationRecipient[]
+  authoredQuestions Question[]      @relation("QuestionAuthor")
+  createdExams      Exam[]          @relation("ExamAuthor")
+  sentNotifications Notification[]  @relation("NotificationAuthor")
+  auditLogs         AuditLog[]
+
+  @@index([role, status])
+  @@map("users")
+}
+
+model StudentProfile {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  fullName    String
+  dateOfBirth DateTime?
+  photoUrl    String?
+  course      String?
+  batch       String?
+  city        String?
+  preferences Json      @default("{}") // target exams, subjects, language
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([batch])
+  @@map("student_profiles")
+}
+
+model AdminProfile {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  fullName    String
+  designation String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("admin_profiles")
+}
+
+/// Refresh-token sessions. Only the SHA-256 hash of the token is stored.
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  tokenHash    String   @unique
+  userAgent    String?
+  ip           String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  id         String    @id @default(cuid())
+  userId     String
+  type       TokenType
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@map("verification_tokens")
+}
+
+// ---------------------------------------------------------------- taxonomy
+
+model Subject {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String   @unique
+  color     String?
+  createdAt DateTime @default(now())
+
+  chapters  Chapter[]
+  questions Question[]
+  sections  ExamSection[]
+
+  @@map("subjects")
+}
+
+model Chapter {
+  id        String   @id @default(cuid())
+  subjectId String
+  name      String
+  order     Int      @default(0)
+
+  subject   Subject    @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  topics    Topic[]
+  questions Question[]
+
+  @@unique([subjectId, name])
+  @@map("chapters")
+}
+
+model Topic {
+  id        String @id @default(cuid())
+  chapterId String
+  name      String
+
+  chapter   Chapter    @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  questions Question[]
+
+  @@unique([chapterId, name])
+  @@map("topics")
+}
+
+// ---------------------------------------------------------------- question bank
+
+model Question {
+  id          String         @id @default(cuid())
+  type        QuestionType
+  status      QuestionStatus @default(ACTIVE)
+  text        String
+  imageUrl    String?
+  explanation String?
+  difficulty  Difficulty     @default(MEDIUM)
+
+  subjectId String
+  chapterId String?
+  topicId   String?
+
+  /// Defaults; an exam may override per question via ExamQuestion.
+  defaultMarks         Decimal @default(4) @db.Decimal(6, 2)
+  defaultNegativeMarks Decimal @default(1) @db.Decimal(6, 2)
+  allowPartialMarking  Boolean @default(false)
+
+  /// NUMERICAL questions only
+  numericAnswer    Decimal? @db.Decimal(14, 4)
+  numericTolerance Decimal? @default(0) @db.Decimal(10, 4)
+
+  tags        String[]
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subject   Subject          @relation(fields: [subjectId], references: [id])
+  chapter   Chapter?         @relation(fields: [chapterId], references: [id])
+  topic     Topic?           @relation(fields: [topicId], references: [id])
+  createdBy User?            @relation("QuestionAuthor", fields: [createdById], references: [id])
+  options   QuestionOption[]
+  examLinks ExamQuestion[]
+
+  @@index([subjectId, chapterId, difficulty])
+  @@index([type, status])
+  @@map("questions")
+}
+
+model QuestionOption {
+  id         String  @id @default(cuid())
+  questionId String
+  label      String // A, B, C, D
+  text       String
+  imageUrl   String?
+  isCorrect  Boolean @default(false)
+  order      Int     @default(0)
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, label])
+  @@index([questionId])
+  @@map("question_options")
+}
+
+// ---------------------------------------------------------------- exams
+
+model Exam {
+  id           String     @id @default(cuid())
+  title        String
+  slug         String     @unique
+  description  String?
+  instructions String?
+  status       ExamStatus @default(DRAFT)
+
+  durationMinutes Int
+  totalMarks      Decimal @default(0) @db.Decimal(8, 2)
+  passingMarks    Decimal @default(0) @db.Decimal(8, 2)
+
+  negativeMarkingEnabled Boolean @default(true)
+  randomizeQuestions     Boolean @default(false)
+  randomizeOptions       Boolean @default(false)
+  allowSectionSwitching  Boolean @default(true)
+  maxAttempts            Int     @default(1)
+
+  startAt DateTime
+  endAt   DateTime
+
+  resultsPublished Boolean @default(false)
+  showSolutions    Boolean @default(false)
+  rankingEnabled   Boolean @default(true)
+
+  isPaid   Boolean @default(false)
+  price    Decimal @default(0) @db.Decimal(10, 2)
+  currency String  @default("INR")
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy     User?            @relation("ExamAuthor", fields: [createdById], references: [id])
+  sections      ExamSection[]
+  examQuestions ExamQuestion[]
+  attempts      ExamAttempt[]
+  results       Result[]
+  rankings      Ranking[]
+  enrollments   ExamEnrollment[]
+  payments      Payment[]
+  notifications Notification[]
+
+  @@index([status, startAt, endAt])
+  @@map("exams")
+}
+
+model ExamSection {
+  id              String  @id @default(cuid())
+  examId          String
+  subjectId       String?
+  name            String
+  order           Int     @default(0)
+  durationMinutes Int? // set only when sections are individually timed
+  maxQuestions    Int?
+  /// Section-level defaults used when ExamQuestion values are null.
+  marksPerCorrect Decimal @default(4) @db.Decimal(6, 2)
+  negativeMarks   Decimal @default(1) @db.Decimal(6, 2)
+
+  exam      Exam           @relation(fields: [examId], references: [id], onDelete: Cascade)
+  subject   Subject?       @relation(fields: [subjectId], references: [id])
+  questions ExamQuestion[]
+
+  @@unique([examId, name])
+  @@index([examId, order])
+  @@map("exam_sections")
+}
+
+/// Join table: which question sits where in an exam, with per-exam marking overrides.
+model ExamQuestion {
+  id            String   @id @default(cuid())
+  examId        String
+  sectionId     String
+  questionId    String
+  order         Int      @default(0)
+  marks         Decimal? @db.Decimal(6, 2)
+  negativeMarks Decimal? @db.Decimal(6, 2)
+
+  exam     Exam            @relation(fields: [examId], references: [id], onDelete: Cascade)
+  section  ExamSection     @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  question Question        @relation(fields: [questionId], references: [id])
+  answers  StudentAnswer[]
+
+  @@unique([examId, questionId])
+  @@index([examId, sectionId, order])
+  @@map("exam_questions")
+}
+
+model ExamEnrollment {
+  id        String           @id @default(cuid())
+  examId    String
+  userId    String
+  source    EnrollmentSource @default(FREE)
+  paymentId String?
+  createdAt DateTime         @default(now())
+
+  exam    Exam     @relation(fields: [examId], references: [id], onDelete: Cascade)
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payment Payment? @relation(fields: [paymentId], references: [id])
+
+  @@unique([examId, userId])
+  @@map("exam_enrollments")
+}
+
+// ---------------------------------------------------------------- attempts
+
+model ExamAttempt {
+  id        String        @id @default(cuid())
+  examId    String
+  userId    String
+  attemptNo Int           @default(1)
+  status    AttemptStatus @default(IN_PROGRESS)
+
+  /// Server-authoritative clock. Never trust the browser.
+  startedAt       DateTime  @default(now())
+  expiresAt       DateTime
+  submittedAt     DateTime?
+  lastActivityAt  DateTime  @default(now())
+
+  /// Frozen question order for this attempt (array of examQuestionIds), so a
+  /// randomised paper survives refreshes and reconnects.
+  questionOrder Json
+  ipAddress     String?
+  userAgent     String?
+
+  exam    Exam            @relation(fields: [examId], references: [id], onDelete: Cascade)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers StudentAnswer[]
+  result  Result?
+
+  @@unique([examId, userId, attemptNo])
+  @@index([status, expiresAt])
+  @@map("exam_attempts")
+}
+
+model StudentAnswer {
+  id                String       @id @default(cuid())
+  attemptId         String
+  examQuestionId    String
+  status            AnswerStatus @default(NOT_VISITED)
+  selectedOptionIds String[]
+  numericAnswer     Decimal?     @db.Decimal(14, 4)
+  timeSpentSeconds  Int          @default(0)
+  visitCount        Int          @default(0)
+  updatedAt         DateTime     @updatedAt
+
+  attempt      ExamAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  examQuestion ExamQuestion @relation(fields: [examQuestionId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, examQuestionId])
+  @@index([attemptId])
+  @@map("student_answers")
+}
+
+// ---------------------------------------------------------------- results
+
+model Result {
+  id        String @id @default(cuid())
+  attemptId String @unique
+  examId    String
+  userId    String
+
+  totalMarks     Decimal @db.Decimal(8, 2)
+  marksObtained  Decimal @db.Decimal(8, 2)
+  percentage     Decimal @db.Decimal(5, 2)
+  correctCount   Int
+  incorrectCount Int
+  unattemptedCount Int
+  negativeMarks  Decimal @db.Decimal(8, 2)
+  timeSpentSeconds Int   @default(0)
+  passed         Boolean @default(false)
+  published      Boolean @default(false)
+
+  /// Denormalised analytics payloads, recomputable from student_answers.
+  sectionBreakdown Json @default("[]")
+  subjectBreakdown Json @default("[]")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  attempt ExamAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  exam    Exam        @relation(fields: [examId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ranking Ranking?
+
+  @@index([examId, marksObtained])
+  @@index([userId, createdAt])
+  @@map("results")
+}
+
+model Ranking {
+  id       String  @id @default(cuid())
+  examId   String
+  userId   String
+  resultId String  @unique
+  rank     Int
+  percentile Decimal @db.Decimal(6, 3)
+  score    Decimal @db.Decimal(8, 2)
+  /// Lower is better; currently total time taken, used to break score ties.
+  tieBreakValue Int      @default(0)
+  category      String?
+  categoryRank  Int?
+  computedAt    DateTime @default(now())
+
+  exam   Exam   @relation(fields: [examId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  result Result @relation(fields: [resultId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, userId])
+  @@index([examId, rank])
+  @@map("rankings")
+}
+
+// ---------------------------------------------------------------- comms, money, ops
+
+model Notification {
+  id          String               @id @default(cuid())
+  title       String
+  body        String
+  audience    NotificationAudience @default(ALL)
+  examId      String?
+  batch       String?
+  important   Boolean              @default(false)
+  publishedAt DateTime?
+  createdById String?
+  createdAt   DateTime             @default(now())
+
+  exam       Exam?                   @relation(fields: [examId], references: [id])
+  createdBy  User?                   @relation("NotificationAuthor", fields: [createdById], references: [id])
+  recipients NotificationRecipient[]
+
+  @@index([audience, publishedAt])
+  @@map("notifications")
+}
+
+model NotificationRecipient {
+  id             String    @id @default(cuid())
+  notificationId String
+  userId         String
+  readAt         DateTime?
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId, readAt])
+  @@map("notification_recipients")
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  userId            String
+  examId            String
+  amount            Decimal       @db.Decimal(10, 2)
+  currency          String        @default("INR")
+  status            PaymentStatus @default(CREATED)
+  provider          String        @default("manual") // razorpay | stripe | manual
+  providerOrderId   String?       @unique
+  providerPaymentId String?
+  signature         String?
+  meta              Json          @default("{}")
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exam        Exam             @relation(fields: [examId], references: [id], onDelete: Cascade)
+  enrollments ExamEnrollment[]
+
+  @@index([userId, status])
+  @@map("payments")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  meta       Json     @default("{}")
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}

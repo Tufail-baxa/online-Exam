@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Admin — Exam Portal</title><link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>Exam Portal · Admin</h1>
+  <div class="spacer"></div>
+  <span class="who" id="who"></span>
+  <button class="small" onclick="openPasswordDialog()">Change password</button>
+  <button class="small" onclick="openPasswordDialog()">Change password</button>
+  <button class="small" onclick="logout()">Logout</button>
+</header>
+
+<dialog id="pwDialog">
+  <h3 style="margin-top:0">Change password</h3>
+  <label class="field"><span>Current password</span><input id="pwCurrent" type="password"></label>
+  <label class="field"><span>New password (min 6 characters)</span><input id="pwNew" type="password"></label>
+  <div class="row" style="justify-content:flex-end">
+    <button style="flex:0 0 auto" onclick="document.getElementById('pwDialog').close()">Cancel</button>
+    <button class="primary" style="flex:0 0 auto" onclick="submitPasswordChange()">Save</button>
+  </div>
+</dialog>
+
+<div class="wrap">
+  <div class="tabs" id="tabs"></div>
+  <div id="view"></div>
+</div>
+
+<dialog id="pwDialog">
+  <h3 style="margin-top:0">Change my password</h3>
+  <label class="field"><span>Current password</span><input type="password" id="pwCurrent"></label>
+  <label class="field"><span>New password (min 6 characters)</span><input type="password" id="pwNew"></label>
+  <label class="field"><span>Confirm new password</span><input type="password" id="pwConfirm"></label>
+  <div class="row" style="justify-content:flex-end">
+    <button style="flex:0 0 auto" onclick="document.getElementById('pwDialog').close()">Cancel</button>
+    <button class="primary" style="flex:0 0 auto" onclick="submitPasswordChange()">Update password</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const toast = (m, err) => { const t = $('#toast'); t.textContent = m; t.className = 'toast show' + (err ? ' err' : ''); setTimeout(() => t.className = 'toast', 2800); };
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { 'content-type': 'application/json' }, ...opts });
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 401) { location.href = '/'; return null; }
+  if (!r.ok) { toast(d.error || 'Something went wrong', true); return null; }
+  return d;
+}
+const logout = async () => { await fetch('/api/logout', { method: 'POST' }); location.href = '/'; };
+
+function openPasswordDialog() {
+  $('#pwCurrent').value = ''; $('#pwNew').value = '';
+  $('#pwDialog').showModal();
+}
+async function submitPasswordChange() {
+  const currentPassword = $('#pwCurrent').value;
+  const newPassword = $('#pwNew').value;
+  const res = await api('/api/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
+  if (res) { toast('Password changed'); $('#pwDialog').close(); }
+}
+
+function openPasswordDialog() {
+  $('#pwCurrent').value = ''; $('#pwNew').value = ''; $('#pwConfirm').value = '';
+  $('#pwDialog').showModal();
+}
+async function submitPasswordChange() {
+  const currentPassword = $('#pwCurrent').value;
+  const newPassword = $('#pwNew').value;
+  if (newPassword !== $('#pwConfirm').value) return toast('New passwords do not match', true);
+  const res = await api('/api/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
+  if (res) { toast('Password updated'); $('#pwDialog').close(); }
+}
+
+const TABS = ['Dashboard', 'Subjects', 'Questions', 'Exams', 'Students', 'Live monitor'];
+let tab = 'Dashboard';
+let monitorTimer = null;
+
+function renderTabs() {
+  $('#tabs').innerHTML = TABS.map((t) =>
+    `<button class="tab ${t === tab ? 'active' : ''}" onclick="go('${t}')">${t}</button>`).join('');
+}
+function go(t) { tab = t; clearInterval(monitorTimer); monitorTimer = null; renderTabs(); render(); }
+
+async function render() {
+  const fn = { Dashboard: dashboard, Subjects: subjects, Questions: questions, Exams: exams, Students: students, 'Live monitor': monitor }[tab];
+  await fn();
+}
+
+// ---------------------------------------------------------------- dashboard
+async function dashboard() {
+  const s = await api('/api/admin/stats'); if (!s) return;
+  $('#view').innerHTML = `
+    <div class="cards">
+      ${[['Students', s.students], ['Questions', s.questions], ['Subjects', s.subjects], ['Exams', s.exams],
+         ['Writing now', s.liveNow], ['Submitted', s.submitted], ['Average score', s.averageScore]]
+        .map(([k, v]) => `<div class="card"><b>${v}</b><span>${k}</span></div>`).join('')}
+    </div>
+    <div class="panel">
+      <h2>How to set up an exam</h2>
+      <ol class="muted" style="line-height:1.9">
+        <li><b>Subjects</b> — add Physics, Chemistry, and whatever else you need.</li>
+        <li><b>Questions</b> — add questions with your own options, marks and negative marks.</li>
+        <li><b>Exams</b> — pick the questions, set the duration, and turn on shuffling so every
+            student gets the questions and options in a different order.</li>
+        <li><b>Students</b> — create a username and password for each student.</li>
+        <li><b>Live monitor</b> — watch who is on which question while the exam is running.</li>
+      </ol>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- subjects
+async function subjects() {
+  const list = await api('/api/admin/subjects'); if (!list) return;
+  $('#view').innerHTML = `
+    <div class="panel">
+      <h2>Add subject</h2>
+      <div class="row">
+        <input id="sname" placeholder="e.g. Physics">
+        <button class="primary" style="flex:0 0 auto" onclick="addSubject()">Add</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Subjects (${list.length})</h2>
+      <table><tr><th>Name</th><th>Questions</th><th></th></tr>
+      ${list.map((s) => `<tr><td>${esc(s.name)}</td><td id="c_${s.id}">—</td>
+        <td style="text-align:right"><button class="small danger" onclick="delSubject('${s.id}')">Delete</button></td></tr>`).join('')}
+      </table>
+    </div>`;
+  const qs = await api('/api/admin/questions') || [];
+  list.forEach((s) => {
+    const cell = document.getElementById('c_' + s.id);
+    if (cell) cell.textContent = qs.filter((q) => q.subjectId === s.id).length;
+  });
+}
+async function addSubject() {
+  const name = $('#sname').value.trim(); if (!name) return toast('Type a subject name', true);
+  if (await api('/api/admin/subjects', { method: 'POST', body: JSON.stringify({ name }) })) { toast('Subject added'); subjects(); }
+}
+async function delSubject(id) {
+  if (!confirm('Delete this subject?')) return;
+  if (await api('/api/admin/subjects/' + id, { method: 'DELETE' })) { toast('Deleted'); subjects(); }
+}
+
+// ---------------------------------------------------------------- questions
+let editingQuestion = null;
+
+async function questions() {
+  const [list, subs, settings] = await Promise.all([api('/api/admin/questions'), api('/api/admin/subjects'), api('/api/admin/settings')]);
+  if (!list || !subs) return;
+  if (!subs.length) { $('#view').innerHTML = `<div class="panel"><h2>Add a subject first</h2>
+    <p class="muted">Questions need a subject. Open the Subjects tab.</p></div>`; return; }
+
+  const q = editingQuestion || { type: 'SINGLE_CORRECT', subjectId: subs[0].id, marks: 4, negativeMarks: 1,
+    text: '', explanation: '', numericAnswer: '', numericTolerance: 0.01, allowPartialMarking: false,
+    options: [{ text: '', isCorrect: false }, { text: '', isCorrect: false }, { text: '', isCorrect: false }, { text: '', isCorrect: false }] };
+
+  const isNumeric = q.type === 'NUMERICAL';
+  const isTF = q.type === 'TRUE_FALSE';
+  const opts = isTF && !editingQuestion ? [{ text: 'True', isCorrect: false }, { text: 'False', isCorrect: false }] : q.options;
+
+  $('#view').innerHTML = `
+    <div class="panel">
+      <h2>${editingQuestion ? 'Edit question' : 'Add question'}</h2>
+      <div class="row">
+        <label class="field"><span>Subject</span><select id="qsub">
+          ${subs.map((s) => `<option value="${s.id}" ${s.id === q.subjectId ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
+        </select></label>
+        <label class="field"><span>Type</span><select id="qtype" onchange="changeType(this.value)">
+          ${['SINGLE_CORRECT', 'MULTIPLE_CORRECT', 'NUMERICAL', 'TRUE_FALSE']
+            .map((t) => `<option ${t === q.type ? 'selected' : ''}>${t}</option>`).join('')}
+        </select></label>
+        <label class="field"><span>Marks for correct</span><input id="qmarks" type="number" step="0.5" value="${q.marks}"></label>
+        <label class="field"><span>Negative marks</span><input id="qneg" type="number" step="0.25" value="${q.negativeMarks}"></label>
+      </div>
+      <label class="field"><span>Question</span><textarea id="qtext">${esc(q.text)}</textarea></label>
+
+      <div id="answerArea">
+        ${isNumeric ? `<div class="row">
+            <label class="field"><span>Correct value</span><input id="qnum" type="number" step="any" value="${q.numericAnswer ?? ''}"></label>
+            <label class="field"><span>Tolerance (±)</span><input id="qtol" type="number" step="any" value="${q.numericTolerance ?? 0}"></label>
+          </div>`
+        : `<p class="muted">Tick the correct option${q.type === 'MULTIPLE_CORRECT' ? 's' : ''}.</p>
+           <div id="optList">${opts.map((o, i) => optionRow(o, i, q.type)).join('')}</div>
+           ${isTF ? '' : `<button class="small" onclick="addOption()">+ Add option</button>`}
+           ${q.type === 'MULTIPLE_CORRECT' ? `<label class="field" style="margin-top:10px">
+             <input type="checkbox" id="qpartial" ${q.allowPartialMarking ? 'checked' : ''} style="width:auto">
+             Allow partial marks (JEE style)</label>` : ''}`}
+      </div>
+
+      <label class="field"><span>Explanation (shown in results)</span><textarea id="qexp">${esc(q.explanation)}</textarea></label>
+      <div class="row" style="justify-content:flex-end">
+        ${editingQuestion ? `<button style="flex:0 0 auto" onclick="cancelEdit()">Cancel</button>` : ''}
+        <button class="primary" style="flex:0 0 auto" onclick="saveQuestion()">${editingQuestion ? 'Save changes' : 'Add question'}</button>
+      </div>
+    </div>
+
+    ${bulkPanel(subs)}
+    ${aiPanel(subs, settings)}
+
+    <div class="panel">
+      <h2>Question bank (${list.length})</h2>
+      <table><tr><th>Question</th><th>Subject</th><th>Type</th><th>Marks</th><th></th></tr>
+      ${list.map((x) => `<tr>
+        <td>${esc(x.text).slice(0, 90)}</td>
+        <td>${esc((subs.find((s) => s.id === x.subjectId) || {}).name || '—')}</td>
+        <td class="muted">${x.type.replace(/_/g, ' ').toLowerCase()}</td>
+        <td>+${x.marks} / −${x.negativeMarks}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="small" onclick='editQuestion(${JSON.stringify(x.id)})'>Edit</button>
+          <button class="small danger" onclick="delQuestion('${x.id}')">Delete</button></td></tr>`).join('')
+        || '<tr><td colspan="5" class="muted">No questions yet.</td></tr>'}
+      </table>
+    </div>`;
+}
+
+function optionRow(o, i, type) {
+  return `<div class="row" style="margin-bottom:8px;align-items:center">
+    <input class="optText" value="${esc(o.text)}" placeholder="Option ${'ABCDEFGH'[i]}">
+    <label style="flex:0 0 auto;font-size:13px;color:#64748b">
+      <input type="${type === 'MULTIPLE_CORRECT' ? 'checkbox' : 'radio'}" name="correct" class="optCorrect"
+        ${o.isCorrect ? 'checked' : ''} style="width:auto"> correct</label>
+  </div>`;
+}
+function addOption() {
+  const list = document.getElementById('optList');
+  const type = document.getElementById('qtype').value;
+  list.insertAdjacentHTML('beforeend', optionRow({ text: '', isCorrect: false }, list.children.length, type));
+}
+function changeType(t) {
+  const current = collectQuestion();
+  editingQuestion = { ...current, type: t, id: editingQuestion ? editingQuestion.id : undefined,
+    options: t === 'TRUE_FALSE' ? [{ text: 'True', isCorrect: false }, { text: 'False', isCorrect: false }] : current.options };
+  if (!editingQuestion.id) { const e = editingQuestion; editingQuestion = e; }
+  questions();
+}
+function collectQuestion() {
+  const type = document.getElementById('qtype').value;
+  const base = {
+    subjectId: document.getElementById('qsub').value,
+    type,
+    text: document.getElementById('qtext').value,
+    marks: Number(document.getElementById('qmarks').value),
+    negativeMarks: Number(document.getElementById('qneg').value),
+    explanation: document.getElementById('qexp').value,
+    allowPartialMarking: !!(document.getElementById('qpartial') || {}).checked,
+    options: [],
+  };
+  if (type === 'NUMERICAL') {
+    base.numericAnswer = document.getElementById('qnum') ? document.getElementById('qnum').value : '';
+    base.numericTolerance = document.getElementById('qtol') ? document.getElementById('qtol').value : 0;
+  } else {
+    const texts = [...document.querySelectorAll('.optText')];
+    const marks = [...document.querySelectorAll('.optCorrect')];
+    base.options = texts.map((t, i) => ({ text: t.value, isCorrect: marks[i] && marks[i].checked }));
+  }
+  return base;
+}
+async function saveQuestion() {
+  const payload = collectQuestion();
+  const editingId = editingQuestion && editingQuestion.id;
+  const res = await api('/api/admin/questions' + (editingId ? '/' + editingId : ''),
+    { method: editingId ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+  if (res) { toast(editingId ? 'Question updated' : 'Question added'); editingQuestion = null; questions(); }
+}
+async function editQuestion(id) {
+  const list = await api('/api/admin/questions');
+  editingQuestion = list.find((q) => q.id === id);
+  questions(); window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+function cancelEdit() { editingQuestion = null; questions(); }
+async function delQuestion(id) {
+  if (!confirm('Delete this question? It will also be removed from any exam using it.')) return;
+  if (await api('/api/admin/questions/' + id, { method: 'DELETE' })) { toast('Deleted'); questions(); }
+}
+
+// ---------------------------------------------------------------- bulk paste import
+const BULK_EXAMPLE = `1. What is the powerhouse of the cell?
+a) Nucleus
+b) Mitochondria *
+c) Ribosome
+d) Golgi body
+
+2. Water boils at 100°C at sea level.
+True *
+False
+
+3. Which of these are prime numbers?
+a) 2 *
+b) 4
+c) 5 *
+d) 9
+
+4. What is 12 + 7?
+Answer: 19
+
+5. Capital of Gujarat is
+a) Ahmedabad
+b) Surat
+c) Gandhinagar
+Ans: c`;
+
+let bulkParsed = [];
+
+function bulkPanel(subs) {
+  return `<div class="panel">
+    <h2>Bulk add — paste many questions at once</h2>
+    <p class="muted">Paste your questions in the format shown below (one blank line between each question).
+      Mark the correct option with a <code>*</code> at the end, or add an <code>Answer: b</code> line.
+      For numerical questions, skip the options and just write <code>Answer: 19</code>.</p>
+    <details style="margin-bottom:12px">
+      <summary style="cursor:pointer;color:var(--brand);font-size:13px">Show format example</summary>
+      <pre style="background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;white-space:pre-wrap;margin-top:8px">${esc(BULK_EXAMPLE)}</pre>
+      <button class="small" style="margin-top:6px" onclick="document.getElementById('bulkText').value=BULK_EXAMPLE">Load this example into the box</button>
+    </details>
+    <div class="row">
+      <label class="field"><span>Subject for all these questions</span><select id="bulkSubject">
+        ${subs.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
+      </select></label>
+      <label class="field"><span>Default marks (if not stated)</span><input id="bulkMarks" type="number" step="0.5" value="4"></label>
+      <label class="field"><span>Default negative marks</span><input id="bulkNeg" type="number" step="0.25" value="1"></label>
+    </div>
+    <textarea id="bulkText" style="min-height:180px;font-family:ui-monospace,monospace;font-size:13px"
+      placeholder="Paste your questions here…"></textarea>
+    <div class="row" style="justify-content:flex-end;margin-top:10px">
+      <button style="flex:0 0 auto" onclick="previewBulk()">Preview</button>
+      <button class="primary" style="flex:0 0 auto" id="bulkImportBtn" disabled onclick="importBulk()">Add all to question bank</button>
+    </div>
+    <div id="bulkPreview"></div>
+  </div>`;
+}
+
+/** Splits pasted text into one block per question and turns each into a question object. */
+function parseBulkText(raw, defaultMarks, defaultNeg) {
+  const blocks = raw.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+  const optionRe = /^\(?([A-Da-d])\)?[\.\)]\s*(.+)$/;
+
+  return blocks.map((block) => {
+    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return { error: 'Empty block' };
+
+    const qText = lines[0].replace(/^\s*(?:Q\.?\s*)?\d+\s*[\.\):]?\s*/i, '').trim();
+    const rest = lines.slice(1);
+
+    const answerLine = rest.find((l) => /^(answer|ans)\s*[:\-]/i.test(l));
+    const marksLine = rest.find((l) => /^marks\s*[:\-]/i.test(l));
+    const negLine = rest.find((l) => /^neg(ative)?\s*[:\-]/i.test(l));
+    const expLine = rest.find((l) => /^exp(lanation)?\s*[:\-]/i.test(l));
+
+    const afterColon = (l) => l.split(/[:\-]/).slice(1).join(':').trim();
+    const marks = marksLine ? Number(afterColon(marksLine)) : defaultMarks;
+    const negativeMarks = negLine ? Number(afterColon(negLine)) : defaultNeg;
+    const explanation = expLine ? afterColon(expLine) : '';
+
+    const isBareTF = (l) => /^(true|false)\s*(\*|\(correct\))?\s*$/i.test(l);
+    const optLines = rest.filter((l) => (optionRe.test(l) || isBareTF(l)) && !/^(answer|ans|marks|neg|exp)/i.test(l));
+
+    if (!qText) return { error: 'Could not read the question text' };
+
+    // No options written → numerical, using the Answer: line.
+    if (optLines.length === 0) {
+      if (!answerLine) return { error: 'No options and no Answer: line for — ' + qText.slice(0, 50) };
+      const val = afterColon(answerLine);
+      if (/^(true|false)$/i.test(val)) {
+        return { type: 'TRUE_FALSE', subjectId: null, text: qText, marks, negativeMarks, explanation,
+          options: [{ text: 'True', isCorrect: /true/i.test(val) }, { text: 'False', isCorrect: /false/i.test(val) }] };
+      }
+      const num = Number(val);
+      if (Number.isNaN(num)) return { error: 'Answer is not a number or True/False — ' + qText.slice(0, 50) };
+      return { type: 'NUMERICAL', subjectId: null, text: qText, marks, negativeMarks, explanation, numericAnswer: num, numericTolerance: 0.01 };
+    }
+
+    let correctLetters = new Set();
+    if (answerLine) afterColon(answerLine).split(/[,\s]+/).forEach((x) => correctLetters.add(x.trim().toUpperCase()));
+
+    const options = optLines.map((l) => {
+      const m = l.match(optionRe);
+      const letter = m ? m[1].toUpperCase() : null;
+      let text = (m ? m[2] : l).trim();
+      let isCorrect = false;
+      if (/\*\s*$/.test(text)) { isCorrect = true; text = text.replace(/\*\s*$/, '').trim(); }
+      if (/\(correct\)\s*$/i.test(text)) { isCorrect = true; text = text.replace(/\(correct\)\s*$/i, '').trim(); }
+      if (letter && correctLetters.has(letter)) isCorrect = true;
+      if (correctLetters.has(text.toUpperCase())) isCorrect = true; // e.g. "Answer: True"
+      return { text, isCorrect };
+    });
+
+    const correctCount = options.filter((o) => o.isCorrect).length;
+    if (correctCount === 0) return { error: 'No correct option marked (use * or an Answer: line) — ' + qText.slice(0, 50) };
+
+    const isTF = options.length === 2 && options.every((o) => /^(true|false)$/i.test(o.text));
+    const type = isTF ? 'TRUE_FALSE' : correctCount > 1 ? 'MULTIPLE_CORRECT' : 'SINGLE_CORRECT';
+    return { type, subjectId: null, text: qText, marks, negativeMarks, explanation, options, allowPartialMarking: type === 'MULTIPLE_CORRECT' };
+  });
+}
+
+function renderQuestionPreviewHTML(list) {
+  const ok = list.filter((q) => !q.error);
+  const bad = list.filter((q) => q.error);
+  return `
+    <p style="margin-top:14px"><b>${ok.length} question${ok.length === 1 ? '' : 's'} ready</b>
+      ${bad.length ? `<span style="color:var(--bad)"> · ${bad.length} to fix</span>` : ''}</p>
+    <table><tr><th>#</th><th>Type</th><th>Question</th><th>Correct answer</th></tr>
+      ${list.map((q, i) => q.error
+        ? `<tr><td>${i + 1}</td><td colspan="3" style="color:var(--bad)">${esc(q.error)}</td></tr>`
+        : `<tr><td>${i + 1}</td><td class="muted">${q.type.replace(/_/g, ' ').toLowerCase()}</td>
+             <td>${esc(q.text).slice(0, 70)}</td>
+             <td>${q.type === 'NUMERICAL' ? q.numericAnswer : q.options.filter((o) => o.isCorrect).map((o) => esc(o.text)).join(', ')}</td></tr>`
+      ).join('')}
+    </table>`;
+}
+
+function previewBulk() {
+  const raw = $('#bulkText').value.trim();
+  if (!raw) return toast('Paste some questions first', true);
+  const subjectId = $('#bulkSubject').value;
+  const defaultMarks = Number($('#bulkMarks').value) || 1;
+  const defaultNeg = Number($('#bulkNeg').value) || 0;
+
+  bulkParsed = parseBulkText(raw, defaultMarks, defaultNeg).map((q) => (q.error ? q : { ...q, subjectId }));
+  $('#bulkPreview').innerHTML = renderQuestionPreviewHTML(bulkParsed);
+  $('#bulkImportBtn').disabled = bulkParsed.filter((q) => !q.error).length === 0;
+}
+
+async function importBulk() {
+  const valid = bulkParsed.filter((q) => !q.error);
+  if (!valid.length) return;
+  const res = await api('/api/admin/questions/bulk', { method: 'POST', body: JSON.stringify({ questions: valid }) });
+  if (!res) return;
+  toast(`Added ${res.created} question${res.created === 1 ? '' : 's'}` + (res.errors.length ? ` · ${res.errors.length} skipped` : ''));
+  $('#bulkText').value = '';
+  bulkParsed = [];
+  questions();
+}
+
+// ---------------------------------------------------------------- AI generate from material
+let aiParsed = [];
+
+function aiPanel(subs, settings) {
+  const configured = settings && settings.aiConfigured;
+  return `<div class="panel">
+    <h2>Generate from syllabus or notes (AI)</h2>
+    <p class="muted">Paste your syllabus, chapter notes, or any study material. Claude will write exam
+      questions strictly from that material. This calls Anthropic's API using your own key and will use
+      a small amount of paid credit per generation — get a key at
+      <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>.</p>
+
+    <div class="row" style="align-items:flex-end">
+      <label class="field" style="flex:2 1 260px"><span>Anthropic API key
+        ${configured ? `<span style="color:var(--ok)">— saved (${esc(settings.aiApiKeyMasked)})</span>` : '<span style="color:var(--bad)">— not set</span>'}</span>
+        <input id="aiKeyInput" type="password" placeholder="${configured ? 'Enter a new key to replace it' : 'sk-ant-…'}"></label>
+      <button style="flex:0 0 auto" onclick="saveAiKey()">Save key</button>
+    </div>
+
+    <label class="field" style="margin-top:6px"><span>Subject</span><select id="aiSubject">
+      ${subs.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}
+    </select></label>
+    <label class="field"><span>Paste syllabus / notes / material</span>
+      <textarea id="aiMaterial" style="min-height:160px" placeholder="Paste chapter text, syllabus points, or notes here…"></textarea></label>
+
+    <div class="row">
+      <label class="field"><span>How many questions</span><input id="aiCount" type="number" min="1" max="20" value="5"></label>
+      <label class="field"><span>Difficulty</span><select id="aiDifficulty">
+        <option value="easy">Easy</option><option value="medium" selected>Medium</option><option value="hard">Hard</option>
+      </select></label>
+      <label class="field"><span>Marks for correct</span><input id="aiMarks" type="number" step="0.5" value="4"></label>
+      <label class="field"><span>Negative marks</span><input id="aiNeg" type="number" step="0.25" value="1"></label>
+    </div>
+    <div class="row" style="margin-bottom:6px">
+      ${[['SINGLE_CORRECT', 'Single correct', true], ['MULTIPLE_CORRECT', 'Multiple correct', false],
+         ['TRUE_FALSE', 'True / False', false], ['NUMERICAL', 'Numerical', false]]
+        .map(([val, label, on]) => `<label class="field" style="flex:1 1 160px">
+          <input type="checkbox" class="aiType" value="${val}" ${on ? 'checked' : ''} style="width:auto"> ${label}</label>`).join('')}
+    </div>
+
+    <div class="row" style="justify-content:flex-end">
+      <button class="primary" style="flex:0 0 auto" id="aiGenBtn" onclick="generateWithAI()">Generate questions</button>
+      <button class="primary" style="flex:0 0 auto" id="aiImportBtn" disabled onclick="importAi()">Add all to question bank</button>
+    </div>
+    <div id="aiPreview"></div>
+  </div>`;
+}
+
+async function saveAiKey() {
+  const aiApiKey = $('#aiKeyInput').value.trim();
+  if (!aiApiKey) return toast('Type a key first', true);
+  if (await api('/api/admin/settings', { method: 'POST', body: JSON.stringify({ aiApiKey }) })) { toast('API key saved'); questions(); }
+}
+
+async function generateWithAI() {
+  const subjectId = $('#aiSubject').value;
+  const material = $('#aiMaterial').value.trim();
+  if (material.length < 30) return toast('Paste some syllabus or notes text first', true);
+  const types = [...document.querySelectorAll('.aiType:checked')].map((c) => c.value);
+  if (!types.length) return toast('Pick at least one question type', true);
+
+  const payload = {
+    subjectId, material,
+    count: Number($('#aiCount').value) || 5,
+    difficulty: $('#aiDifficulty').value,
+    types,
+    marks: Number($('#aiMarks').value) || 4,
+    negativeMarks: Number($('#aiNeg').value) || 1,
+  };
+
+  const btn = $('#aiGenBtn');
+  btn.disabled = true; const originalLabel = btn.textContent; btn.textContent = 'Generating…';
+  const res = await api('/api/admin/ai/generate', { method: 'POST', body: JSON.stringify(payload) });
+  btn.disabled = false; btn.textContent = originalLabel;
+  if (!res) return;
+
+  aiParsed = [...res.questions, ...res.errors.map((e) => ({ error: e.error, text: e.text }))];
+  $('#aiPreview').innerHTML = renderQuestionPreviewHTML(aiParsed);
+  $('#aiImportBtn').disabled = res.questions.length === 0;
+  toast(`Generated ${res.questions.length} question${res.questions.length === 1 ? '' : 's'}` + (res.errors.length ? ` · ${res.errors.length} need fixing` : ''));
+}
+
+async function importAi() {
+  const valid = aiParsed.filter((q) => !q.error);
+  if (!valid.length) return;
+  const res = await api('/api/admin/questions/bulk', { method: 'POST', body: JSON.stringify({ questions: valid }) });
+  if (!res) return;
+  toast(`Added ${res.created} question${res.created === 1 ? '' : 's'}` + (res.errors.length ? ` · ${res.errors.length} skipped` : ''));
+  aiParsed = [];
+  $('#aiPreview').innerHTML = '';
+  $('#aiImportBtn').disabled = true;
+  questions();
+}
+
+// ---------------------------------------------------------------- exams
+let editingExam = null;
+
+async function exams() {
+  const [list, qs, subs, studentList] = await Promise.all([
+    api('/api/admin/exams'), api('/api/admin/questions'), api('/api/admin/subjects'), api('/api/admin/students')]);
+  if (!list) return;
+  const e = editingExam || { title: '', durationMinutes: 30, questionIds: [], shuffleQuestions: true,
+    shuffleOptions: true, negativeMarking: true, published: true, showResultToStudent: true, assignedUserIds: [],
+    tabSwitchLimit: 1 };
+
+  $('#view').innerHTML = `
+    <div class="panel">
+      <h2>${editingExam ? 'Edit exam' : 'Create exam'}</h2>
+      <div class="row">
+        <label class="field"><span>Title</span><input id="etitle" value="${esc(e.title)}" placeholder="JEE Mock Test 1"></label>
+        <label class="field"><span>Duration (minutes)</span><input id="edur" type="number" min="1" value="${e.durationMinutes}"></label>
+        <label class="field"><span>Tab-switch warnings allowed
+          <span title="0 = auto-submit the moment they leave the tab. 1 = one warning, then auto-submit.">ⓘ</span></span>
+          <input id="etab" type="number" min="0" max="5" value="${e.tabSwitchLimit ?? 1}"></label>
+      </div>
+      <div class="row" style="margin-bottom:12px">
+        ${[['eshq', 'Shuffle question order per student', e.shuffleQuestions],
+           ['esho', 'Shuffle option order per student', e.shuffleOptions],
+           ['eneg', 'Negative marking', e.negativeMarking],
+           ['epub', 'Published (visible to students)', e.published],
+           ['eres', 'Show result to student', e.showResultToStudent]]
+          .map(([id, label, on]) => `<label class="field" style="flex:1 1 220px">
+            <input type="checkbox" id="${id}" ${on ? 'checked' : ''} style="width:auto"> ${label}</label>`).join('')}
+      </div>
+
+      <h3>Questions (${qs.length} available)</h3>
+      <input id="qFilter" placeholder="Search questions to narrow the list…" oninput="filterExamQuestions()" style="margin-bottom:8px">
+      <div style="max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:10px" id="qPickList">
+        ${qs.map((q) => `<label class="field pickRow" data-search="${esc((q.text + ' ' + ((subs.find((s) => s.id === q.subjectId) || {}).name || '')).toLowerCase())}" style="margin-bottom:7px">
+          <input type="checkbox" class="pickQ" value="${q.id}" ${e.questionIds.includes(q.id) ? 'checked' : ''} style="width:auto">
+          <b>+${q.marks}</b> ${esc((subs.find((s) => s.id === q.subjectId) || {}).name || '')} — ${esc(q.text).slice(0, 80)}
+        </label>`).join('') || '<span class="muted">Add questions first.</span>'}
+      </div>
+
+      <h3>Who can take it</h3>
+      <p class="muted">Leave all unticked to allow every student.</p>
+      <div style="max-height:150px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:10px">
+        ${(studentList || []).map((s) => `<label class="field" style="margin-bottom:6px">
+          <input type="checkbox" class="pickU" value="${s.id}" ${e.assignedUserIds.includes(s.id) ? 'checked' : ''} style="width:auto">
+          ${esc(s.name)} (${esc(s.username)})</label>`).join('') || '<span class="muted">No students yet.</span>'}
+      </div>
+
+      <div class="row" style="justify-content:flex-end;margin-top:14px">
+        ${editingExam ? `<button style="flex:0 0 auto" onclick="editingExam=null;exams()">Cancel</button>` : ''}
+        <button class="primary" style="flex:0 0 auto" onclick="saveExam()">${editingExam ? 'Save changes' : 'Create exam'}</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Exams (${list.length})</h2>
+      <table><tr><th>Title</th><th>Questions</th><th>Duration</th><th>Shuffle</th><th>Status</th><th></th></tr>
+      ${list.map((x) => `<tr>
+        <td>${esc(x.title)}</td><td>${x.questionIds.length}</td><td>${x.durationMinutes} min</td>
+        <td class="muted">${[x.shuffleQuestions && 'questions', x.shuffleOptions && 'options'].filter(Boolean).join(' + ') || 'off'}</td>
+        <td><span class="pill ${x.published ? 'SUBMITTED' : 'UNATTEMPTED'}">${x.published ? 'published' : 'draft'}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="small" onclick="editExam('${x.id}')">Edit</button>
+          <button class="small danger" onclick="delExam('${x.id}')">Delete</button></td></tr>`).join('')
+        || '<tr><td colspan="6" class="muted">No exams yet.</td></tr>'}
+      </table>
+    </div>`;
+}
+function collectExam() {
+  return {
+    title: $('#etitle').value,
+    durationMinutes: Number($('#edur').value),
+    tabSwitchLimit: Number($('#etab').value),
+    questionIds: [...document.querySelectorAll('.pickQ:checked')].map((c) => c.value),
+    assignedUserIds: [...document.querySelectorAll('.pickU:checked')].map((c) => c.value),
+    shuffleQuestions: $('#eshq').checked, shuffleOptions: $('#esho').checked,
+    negativeMarking: $('#eneg').checked, published: $('#epub').checked,
+    showResultToStudent: $('#eres').checked,
+  };
+}
+function filterExamQuestions() {
+  const term = $('#qFilter').value.trim().toLowerCase();
+  document.querySelectorAll('#qPickList .pickRow').forEach((row) => {
+    row.style.display = row.dataset.search.includes(term) ? '' : 'none';
+  });
+}
+async function saveExam() {
+  const editingId = editingExam && editingExam.id;
+  const res = await api('/api/admin/exams' + (editingId ? '/' + editingId : ''),
+    { method: editingId ? 'PUT' : 'POST', body: JSON.stringify(collectExam()) });
+  if (res) { toast(editingId ? 'Exam updated' : 'Exam created'); editingExam = null; exams(); }
+}
+async function editExam(id) {
+  const list = await api('/api/admin/exams');
+  editingExam = list.find((x) => x.id === id);
+  exams(); window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+async function delExam(id) {
+  if (!confirm('Delete this exam and all its attempts?')) return;
+  if (await api('/api/admin/exams/' + id, { method: 'DELETE' })) { toast('Deleted'); exams(); }
+}
+
+// ---------------------------------------------------------------- students
+async function students() {
+  const list = await api('/api/admin/students'); if (!list) return;
+  $('#view').innerHTML = `
+    <div class="panel">
+      <h2>Create student login</h2>
+      <div class="row">
+        <label class="field"><span>Full name</span><input id="nname" placeholder="Aarav Patel"></label>
+        <label class="field"><span>Username</span><input id="nuser" placeholder="aarav"></label>
+        <label class="field"><span>Password</span><input id="npass" placeholder="min 6 characters"></label>
+        <button class="primary" style="flex:0 0 auto;height:40px;margin-top:20px" onclick="addStudent()">Create</button>
+      </div>
+      <p class="muted">Each student gets their own username and password. Share them privately.</p>
+    </div>
+    <div class="panel">
+      <h2>Students (${list.length})</h2>
+      <table><tr><th>Name</th><th>Username</th><th>Attempts</th><th>Status</th><th></th></tr>
+      ${list.map((s) => `<tr>
+        <td>${esc(s.name)}</td><td>${esc(s.username)}</td><td>${s.attempts}</td>
+        <td><span class="pill ${s.blocked ? 'INCORRECT' : 'SUBMITTED'}">${s.blocked ? 'blocked' : 'active'}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="small" onclick="resetPass('${s.id}')">Reset password</button>
+          <button class="small" onclick="toggleBlock('${s.id}',${!s.blocked})">${s.blocked ? 'Unblock' : 'Block'}</button>
+          <button class="small danger" onclick="delStudent('${s.id}')">Delete</button></td></tr>`).join('')
+        || '<tr><td colspan="5" class="muted">No students yet.</td></tr>'}
+      </table>
+    </div>`;
+}
+async function addStudent() {
+  const payload = { name: $('#nname').value, username: $('#nuser').value, password: $('#npass').value };
+  if (await api('/api/admin/students', { method: 'POST', body: JSON.stringify(payload) })) { toast('Student created'); students(); }
+}
+async function resetPass(id) {
+  const password = prompt('New password (min 6 characters):'); if (!password) return;
+  if (await api('/api/admin/students/' + id, { method: 'PATCH', body: JSON.stringify({ password }) })) toast('Password updated');
+}
+async function toggleBlock(id, blocked) {
+  if (await api('/api/admin/students/' + id, { method: 'PATCH', body: JSON.stringify({ blocked }) })) { toast(blocked ? 'Blocked' : 'Unblocked'); students(); }
+}
+async function delStudent(id) {
+  if (!confirm('Delete this student and their attempts?')) return;
+  if (await api('/api/admin/students/' + id, { method: 'DELETE' })) { toast('Deleted'); students(); }
+}
+
+// ---------------------------------------------------------------- live monitor
+async function monitor() {
+  $('#view').innerHTML = `<div class="panel"><h2>Live monitor</h2>
+    <p class="muted">Refreshes every 5 seconds. Question number is that student\u2019s own position in
+    their own shuffled paper.</p><div id="mon">Loading…</div></div>
+    <div class="panel" id="detail" style="display:none"></div>`;
+  await drawMonitor();
+  monitorTimer = setInterval(drawMonitor, 5000);
+}
+const clock = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+async function drawMonitor() {
+  const rows = await api('/api/admin/monitor'); if (!rows) return;
+  const live = rows.filter((r) => r.status === 'IN_PROGRESS');
+  const done = rows.filter((r) => r.status !== 'IN_PROGRESS');
+  const table = (list, isLive) => list.length ? `<table>
+      <tr><th>Student</th><th>Exam</th><th>${isLive ? 'On question' : 'Status'}</th><th>Answered</th>
+          <th>Review</th><th>Tab switches</th><th>${isLive ? 'Time left' : 'Submitted'}</th><th>Score</th><th></th></tr>
+      ${list.map((r) => `<tr>
+        <td>${esc(r.student)}<div class="muted">${esc(r.username)}</div></td>
+        <td>${esc(r.exam)}</td>
+        <td>${isLive ? `<b>Q${r.currentQuestion}</b> / ${r.totalQuestions}
+             <div class="muted">seen ${r.lastSeenSecondsAgo}s ago</div>`
+            : `<span class="pill ${r.status}">${r.status.toLowerCase().replace('_', ' ')}</span>
+               ${r.terminatedForCheating ? '<div class="muted" style="color:var(--bad)">ended for tab switching</div>' : ''}`}</td>
+        <td>${r.answered} / ${r.totalQuestions}</td>
+        <td>${r.markedForReview}</td>
+        <td>${r.violationCount > 0 ? `<span style="color:var(--bad);font-weight:600">${r.violationCount}</span>` : '0'}</td>
+        <td>${isLive ? clock(r.remainingSeconds) : '—'}</td>
+        <td><b>${r.score}</b> / ${r.totalMarks}</td>
+        <td style="text-align:right"><button class="small" onclick="showAttempt('${r.attemptId}')">Details</button></td>
+      </tr>`).join('')}</table>` : '<p class="muted">Nothing here yet.</p>';
+
+  $('#mon').innerHTML = `<h3>Writing now (${live.length})</h3>${table(live, true)}
+                         <h3>Finished (${done.length})</h3>${table(done, false)}`;
+}
+
+async function showAttempt(id) {
+  const d = await api('/api/admin/attempt/' + id); if (!d) return;
+  const box = $('#detail');
+  box.style.display = 'block';
+  box.innerHTML = `<h2>${esc(d.student)} — ${esc(d.exam)}</h2>
+    <p class="muted">${d.marksObtained} / ${d.totalMarks} · ${d.percentage}% · ${d.correctCount} correct ·
+      ${d.incorrectCount} wrong · ${d.unattemptedCount} left · −${d.negativeMarks} negative</p>
+    ${d.terminatedForCheating ? `<p style="color:var(--bad)"><b>This exam was auto-submitted because the student switched tabs too many times.</b></p>` : ''}
+    ${d.violationCount > 0 ? `<p class="muted">Tab switches: ${d.violationCount}${d.violationLog && d.violationLog.length
+        ? ' at ' + d.violationLog.map((v) => new Date(v.at).toLocaleTimeString()).join(', ') : ''}</p>` : ''}
+    <h3>Subject-wise</h3>
+    <table><tr><th>Subject</th><th>Score</th><th>Correct</th><th>Wrong</th><th>Left</th></tr>
+      ${d.subjectBreakdown.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.obtained} / ${s.total}</td>
+        <td>${s.correct}</td><td>${s.incorrect}</td><td>${s.unattempted}</td></tr>`).join('')}</table>
+    <h3>Question-wise</h3>
+    <table><tr><th>Question</th><th>Result</th><th>Correct answer</th></tr>
+      ${d.review.map((x) => `<tr><td>${esc(x.text).slice(0, 90)}</td>
+        <td><span class="pill ${x.verdict}">${x.verdict.toLowerCase()}</span> ${x.awarded}</td>
+        <td>${esc(x.correctAnswer)}</td></tr>`).join('')}</table>`;
+  box.scrollIntoView({ behavior: 'smooth' });
+}
+
+// ---------------------------------------------------------------- boot
+(async () => {
+  const me = await fetch('/api/me').then((r) => (r.ok ? r.json() : null));
+  if (!me) return (location.href = '/');
+  if (me.role !== 'ADMIN') return (location.href = '/student.html');
+  $('#who').textContent = me.name;
+  renderTabs(); render();
+})();
+</script>
+</body>
+</html>

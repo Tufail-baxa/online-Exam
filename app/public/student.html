@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Exam Portal — Student</title><link rel="stylesheet" href="/style.css">
+<style>
+  .exam{display:grid;grid-template-columns:1fr 290px;gap:16px;align-items:start}
+  @media(max-width:860px){.exam{grid-template-columns:1fr}}
+  .qtext{font-size:17px;line-height:1.55;margin:12px 0 18px}
+  label.opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:10px;
+            padding:12px 14px;margin-bottom:10px;cursor:pointer}
+  label.opt:hover{border-color:var(--brand)}
+  label.opt.sel{border-color:var(--brand);background:#eff6ff}
+  label.opt input{width:auto;margin-top:3px}
+  .palette{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0 14px}
+  .pal{aspect-ratio:1;border-radius:8px;border:none;font-weight:600;background:var(--notvisited);color:#334155}
+  .pal.ANSWERED{background:var(--ok);color:#fff}
+  .pal.NOT_ANSWERED{background:var(--bad);color:#fff}
+  .pal.MARKED_FOR_REVIEW,.pal.ANSWERED_AND_MARKED{background:var(--marked);color:#fff}
+  .pal.current{outline:3px solid #0f172a;outline-offset:2px}
+  .legend{font-size:12px;color:var(--muted);display:grid;gap:6px}
+  .legend span::before{content:"";display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:8px;vertical-align:middle}
+  .l1::before{background:var(--ok)}.l2::before{background:var(--bad)}
+  .l3::before{background:var(--marked)}.l4::before{background:var(--notvisited)}
+  .timer{font-variant-numeric:tabular-nums;font-weight:700;font-size:19px;background:#0f172a;color:#fff;
+         padding:5px 13px;border-radius:8px}
+  .timer.warn{background:var(--bad)}
+  .score{font-size:40px;font-weight:700}
+  .exam-shell{position:relative;margin:0 auto;width:100%}.exam-brand{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-bottom:12px}.exam-brand-head{display:flex;align-items:center;gap:14px}.exam-brand-head img{max-height:52px;max-width:180px;object-fit:contain}.exam-brand-foot{border-top:1px solid var(--line);margin-top:16px;padding-top:9px;font-size:12px;color:var(--muted)}.exam-watermark{position:absolute;inset:90px 0 40px;display:flex;align-items:center;justify-content:center;pointer-events:none;font-size:58px;font-weight:800;color:#94a3b8;opacity:.055;transform:rotate(-22deg);z-index:0;overflow:hidden}.exam-content{position:relative;z-index:1}.exam-full .panel{border-radius:8px}
+.codebox{width:100%;min-height:320px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.5;background:#0b1220;color:#e5e7eb;border-radius:10px;padding:14px;border:1px solid #24324a;box-sizing:border-box}.proctor{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.badge{padding:5px 9px;border-radius:999px;background:#eef2ff;font-size:12px}.badge.ok{background:#dcfce7;color:#166534}.badge.bad{background:#fee2e2;color:#991b1b}.testbox{background:#f8fafc;border:1px solid var(--line);padding:10px;border-radius:8px;font-family:monospace;white-space:pre-wrap;margin:6px 0}.cameraPreview{position:fixed;right:16px;bottom:16px;width:180px;border-radius:12px;border:2px solid #fff;box-shadow:0 8px 30px #0003;display:none;background:#000;z-index:20}</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Exam Portal</h1>
+  <div class="spacer"></div>
+  <span class="timer" id="timer" style="display:none">--:--</span>
+  <span class="who" id="who"></span>
+  <button class="small" id="pwBtn" onclick="openPasswordDialog()">Change password</button>
+  <button class="small" id="logoutBtn" onclick="logout()">Logout</button>
+</header>
+
+<div class="wrap" id="view"></div>
+
+<dialog id="confirm">
+  <h3 style="margin-top:0">Submit your paper?</h3>
+  <p class="muted" id="confirmText"></p>
+  <div class="row" style="justify-content:flex-end">
+    <button style="flex:0 0 auto" onclick="document.getElementById('confirm').close()">Cancel</button>
+    <button class="primary" style="flex:0 0 auto" id="confirmYes">Yes, submit</button>
+  </div>
+</dialog>
+
+<dialog id="pwDialog">
+  <h3 style="margin-top:0">Change my password</h3>
+  <label class="field"><span>Current password</span><input type="password" id="pwCurrent"></label>
+  <label class="field"><span>New password (min 6 characters)</span><input type="password" id="pwNew"></label>
+  <label class="field"><span>Confirm new password</span><input type="password" id="pwConfirm"></label>
+  <div class="row" style="justify-content:flex-end">
+    <button style="flex:0 0 auto" onclick="document.getElementById('pwDialog').close()">Cancel</button>
+    <button class="primary" style="flex:0 0 auto" onclick="submitPasswordChange()">Update password</button>
+  </div>
+</dialog>
+
+<dialog id="rulesDialog" style="max-width:480px">
+  <h3 style="margin-top:0">Before you begin</h3>
+  <ul id="rulesList" style="color:var(--muted);line-height:1.8;padding-left:20px"></ul>
+  <div class="row" style="justify-content:flex-end">
+    <button style="flex:0 0 auto" onclick="document.getElementById('rulesDialog').close()">Cancel</button>
+    <button class="primary" style="flex:0 0 auto" id="rulesStartBtn">I understand, start exam</button>
+  </div>
+</dialog>
+
+<dialog id="tabWarnDialog" style="max-width:420px">
+  <h3 style="margin-top:0;color:var(--bad)">⚠ You left the exam tab</h3>
+  <p id="tabWarnText" style="color:var(--muted)"></p>
+  <div class="row" style="justify-content:flex-end">
+    <button class="primary" style="flex:0 0 auto" onclick="document.getElementById('tabWarnDialog').close()">Back to exam</button>
+  </div>
+</dialog>
+
+<video id="cameraPreview" class="cameraPreview" autoplay muted playsinline></video>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const toast = (m, err) => { const t = $('#toast'); t.textContent = m; t.className = 'toast show' + (err ? ' err' : ''); setTimeout(() => t.className = 'toast', 2800); };
+const clock = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: { 'content-type': 'application/json' }, ...opts });
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 401) { location.href = '/'; return null; }
+  if (!r.ok) { toast(d.error || 'Something went wrong', true); return null; }
+  return d;
+}
+const logout = async () => { await fetch('/api/logout', { method: 'POST' }); location.href = '/'; };
+
+function openPasswordDialog() {
+  $('#pwCurrent').value = ''; $('#pwNew').value = ''; $('#pwConfirm').value = '';
+  $('#pwDialog').showModal();
+}
+async function submitPasswordChange() {
+  const currentPassword = $('#pwCurrent').value;
+  const newPassword = $('#pwNew').value;
+  if (newPassword !== $('#pwConfirm').value) return toast('New passwords do not match', true);
+  const res = await api('/api/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
+  if (res) { toast('Password updated'); $('#pwDialog').close(); }
+}
+
+let S = null, current = 0, ticker = null, sync = 0;
+let pendingTabWarning = null; // { remaining } once a violation is reported while hidden
+let mediaStream = null;
+let BRAND = {logoData:'',logoUrl:'',headerText:'',footerText:'',watermarkText:'',showLogo:true,showHeader:true,showFooter:true,contentWidth:'1100px',questionLayout:'card'};
+let proctorHandlers = [];
+let violationBusy = false;
+
+// ---------------------------------------------------------------- exam list
+async function home() {
+  stopProctoring();
+  clearInterval(ticker); ticker = null; S = null; pendingTabWarning = null;
+  $('#timer').style.display = 'none';
+  const list = await api('/api/student/exams'); if (!list) return;
+  $('#view').innerHTML = `
+    <div class="panel">
+      <h2>My exams</h2>
+      ${list.length ? `<table><tr><th>Exam</th><th>Questions</th><th>Marks</th><th>Duration</th><th>Status</th><th></th></tr>
+        ${list.map((e) => `<tr>
+          <td>${esc(e.title)}</td><td>${e.questionCount}</td><td>${e.totalMarks}</td><td>${e.durationMinutes} min</td>
+          <td><span class="pill ${e.state === 'COMPLETED' ? 'SUBMITTED' : e.state === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'UNATTEMPTED'}">
+            ${e.state.toLowerCase().replace('_', ' ')}</span></td>
+          <td style="text-align:right">
+            ${e.state === 'COMPLETED'
+              ? (e.score !== null ? `<b>${e.score}</b> / ${e.totalMarks} <button class="small" onclick="openResult('${e.attemptId}')">View</button>`
+                                  : '<span class="muted">result pending</span>')
+              : `<button class="primary small" onclick="${e.state === 'IN_PROGRESS' ? `startExam('${e.id}')` : `confirmStart('${e.id}', ${e.durationMinutes})`}">
+                   ${e.state === 'IN_PROGRESS' ? 'Resume' : 'Start'}</button>`}
+          </td></tr>`).join('')}</table>`
+        : '<p class="muted">Your admin has not assigned any exam yet.</p>'}
+    </div>`;
+}
+
+/** Shows the rules dialog before a first-time start. Resuming skips this — the
+ *  student has already agreed and is already inside the exam. */
+function confirmStart(examId, durationMinutes) {
+  $('#rulesList').innerHTML = `
+    <li>You have <b>${durationMinutes} minutes</b>. The timer runs on the server — closing or refreshing the
+      page does not stop it or give you extra time.</li>
+    <li><b>Do not switch tabs, minimize the browser, or open another app.</b> Doing so is recorded.
+      Past the allowed number of warnings, your exam is submitted automatically and you cannot retake it.</li>
+    <li>Use "Mark for review" for questions you want to revisit — it does not affect scoring.</li>
+    <li>Once you submit, you cannot go back in.</li>`;
+  $('#rulesDialog').showModal();
+  $('#rulesStartBtn').onclick = () => { $('#rulesDialog').close(); startExam(examId); };
+}
+
+async function startExam(examId) {
+  try { await startProctoring(); } catch (e) { toast(e.message || 'Camera and microphone are required', true); return; }
+  const state = await api('/api/student/exams/' + examId + '/start', { method: 'POST' });
+  if (!state) return;
+  S = state; current = 0; renderExam();
+}
+
+async function openResult(attemptId) {
+  const state = await api('/api/student/attempts/' + attemptId);
+  if (!state) return;
+  S = state; showResult();
+}
+
+// ---------------------------------------------------------------- proctoring
+async function reportViolation(type, severity='warning', meta={}) {
+  if (!S || S.attempt.status !== 'IN_PROGRESS' || violationBusy) return;
+  violationBusy = true;
+  try {
+    const res = await api('/api/student/attempts/' + S.attempt.id + '/violation', { method:'POST', body:JSON.stringify({type,severity,meta}) });
+    if (res?.terminated) { await refresh(); }
+  } finally { setTimeout(()=>violationBusy=false, 500); }
+}
+async function startProctoring() {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('This browser does not support camera/microphone access');
+  mediaStream = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+  const v=$('#cameraPreview'); v.srcObject=mediaStream; v.style.display='block';
+  const videoTrack=mediaStream.getVideoTracks()[0], audioTrack=mediaStream.getAudioTracks()[0];
+  const videoCheck=()=>{ if (!videoTrack.enabled || videoTrack.readyState !== 'live') reportViolation('camera_interruption','serious'); };
+  const audioCheck=()=>{ if (!audioTrack.enabled || audioTrack.readyState !== 'live') reportViolation('microphone_interruption','warning'); };
+  videoTrack.addEventListener('ended', videoCheck); audioTrack.addEventListener('ended', audioCheck);
+  const fs=()=>{ if (S?.attempt?.status==='IN_PROGRESS' && !document.fullscreenElement) reportViolation('fullscreen_exit','warning'); };
+  document.addEventListener('fullscreenchange',fs); proctorHandlers.push(['fullscreenchange',fs]);
+  try { await document.documentElement.requestFullscreen(); } catch {}
+}
+function stopProctoring(){
+  for(const [ev,fn] of proctorHandlers) document.removeEventListener(ev,fn); proctorHandlers=[];
+  if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}
+  const v=$('#cameraPreview'); if(v){v.srcObject=null;v.style.display='none';}
+  if(document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+}
+
+// ---------------------------------------------------------------- anti-cheat: tab switching
+// visibilitychange fires on tab switches, minimizing, and switching apps — the
+// standard, reliable signal for "the student left the exam". A native dialog
+// (our own confirm/alert) does NOT trigger it, so this doesn't false-positive
+// on our own popups.
+document.addEventListener('visibilitychange', async () => {
+  if (document.hidden) {
+    if (!S || S.attempt.status !== 'IN_PROGRESS') return;
+    const res = await api('/api/student/attempts/' + S.attempt.id + '/violation', { method: 'POST', body: JSON.stringify({ type: 'tab_switch', severity:'warning' }) });
+    if (!res) return;
+    if (res.terminated) pendingTabWarning = { terminated: true };
+    else pendingTabWarning = { terminated: false, remaining: res.remaining };
+  } else if (pendingTabWarning) {
+    const w = pendingTabWarning;
+    pendingTabWarning = null;
+    if (w.terminated) { await refresh(); return; }
+    $('#tabWarnText').textContent = w.remaining > 0
+      ? `Switching tabs during an exam is recorded. You have ${w.remaining} more warning${w.remaining === 1 ? '' : 's'} left — after that, your exam will be submitted automatically and you will not be able to retake it.`
+      : `Switching tabs during an exam is recorded. This was your last warning — the next time, your exam will be submitted automatically and you will not be able to retake it.`;
+    $('#tabWarnDialog').showModal();
+  }
+});
+
+document.addEventListener('paste', () => reportViolation('paste','warning'));
+document.addEventListener('copy', () => reportViolation('copy','warning'));
+document.addEventListener('cut', () => reportViolation('cut','warning'));
+document.addEventListener('contextmenu', (e) => { if(S?.attempt?.status==='IN_PROGRESS'){ e.preventDefault(); reportViolation('context_menu','warning'); } });
+
+// ---------------------------------------------------------------- exam screen
+async function submitCode() {
+  const q=S.questions[current];
+  const code=$('#codeEditor').value, language=$('#codeLanguage').value;
+  const btn=$('#runCodeBtn'); btn.disabled=true; btn.textContent='Running...';
+  const res=await api('/api/student/attempts/'+S.attempt.id+'/code',{method:'POST',body:JSON.stringify({questionId:q.id,code,language})});
+  btn.disabled=false; btn.textContent='Run & Submit';
+  if(res){ q.answer.status='ANSWERED'; q.answer.code=code; q.answer.language=language; q.answer.codingResult=res.codingResult; renderExam(); toast(res.codingResult.accepted?'Accepted ✓':'Submitted — review test case results', !res.codingResult.accepted); }
+}
+
+async function save(patch) {
+  const q = S.questions[current];
+  const res = await api('/api/student/attempts/' + S.attempt.id + '/answer',
+    { method: 'POST', body: JSON.stringify({ questionId: q.id, currentIndex: current, ...patch }) });
+  if (!res) return refresh();
+  Object.assign(q.answer, { status: res.status, selectedOptionIds: res.selectedOptionIds, numericAnswer: res.numericAnswer });
+  renderExam();
+}
+
+function pick(optionId) {
+  const q = S.questions[current];
+  if (q.type === 'MULTIPLE_CORRECT') {
+    const set = new Set(q.answer.selectedOptionIds);
+    set.has(optionId) ? set.delete(optionId) : set.add(optionId);
+    save({ selectedOptionIds: [...set] });
+  } else save({ selectedOptionIds: [optionId] });
+}
+
+function go(i) {
+  current = i;
+  const q = S.questions[current];
+  fetch('/api/student/attempts/' + S.attempt.id + '/visit',
+    { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ questionId: q.id, currentIndex: current }) });
+  if (q.answer.status === 'NOT_VISITED') q.answer.status = 'NOT_ANSWERED';
+  renderExam();
+}
+
+async function refresh() {
+  const state = await api('/api/student/attempts/' + S.attempt.id);
+  if (!state) return;
+  S = state;
+  if (S.attempt.status !== 'IN_PROGRESS') return showResult();
+  renderExam();
+}
+
+function renderExam() {
+  if (S.attempt.status !== 'IN_PROGRESS') return showResult();
+  const q = S.questions[current];
+  $('#title').textContent = S.exam.title;
+  $('#logoutBtn').style.display = 'none';
+  $('#pwBtn').style.display = 'none';
+  $('#timer').style.display = 'inline-block';
+
+  const logo = BRAND.logoData || BRAND.logoUrl;
+  const brandHead = BRAND.showHeader ? `<div class="exam-brand"><div class="exam-brand-head">${BRAND.showLogo && logo ? `<img src="${esc(logo)}" alt="Logo">` : ''}<div><b>${esc(BRAND.headerText || S.exam.title || 'Online Examination')}</b></div></div></div>` : '';
+  const brandFoot = BRAND.showFooter && BRAND.footerText ? `<div class="exam-brand-foot">${esc(BRAND.footerText)}</div>` : '';
+  const watermark = BRAND.watermarkText ? `<div class="exam-watermark">${esc(BRAND.watermarkText)}</div>` : '';
+  $('#view').innerHTML = `<div class="exam-shell ${BRAND.questionLayout === 'full' ? 'exam-full' : ''}" style="max-width:${esc(BRAND.contentWidth)}">${brandHead}${watermark}<div class="exam-content"><div class="exam">
+      <div class="panel">
+        <div class="muted" style="display:flex;gap:14px;flex-wrap:wrap">
+          <span>Question ${current + 1} of ${S.questions.length}</span>
+          <span>${esc(q.subject)}</span>
+          <span>+${q.marks} correct</span>
+          <span>−${q.negativeMarks} wrong</span>
+          <span>${q.type.replace(/_/g, ' ').toLowerCase()}</span>
+        </div>
+        <div class="qtext">${esc(q.text)}</div>
+        ${q.type === 'CODING'
+          ? `<div class="panel" style="padding:12px;background:#f8fafc">
+               <b>Problem</b><p class="muted">${esc(q.coding?.problemStatement || q.text)}</p>
+               ${q.coding?.constraints ? `<b>Constraints</b><p class="muted">${esc(q.coding.constraints)}</p>` : ''}
+               <div class="row"><label class="field"><span>Language</span><select id="codeLanguage">${(q.coding?.allowedLanguages||['python']).map(l=>`<option ${l===(q.answer.language||'python')?'selected':''}>${l}</option>`).join('')}</select></label></div>
+               <textarea id="codeEditor" class="codebox" spellcheck="false">${esc(q.answer.code || q.coding?.starterCode || '')}</textarea>
+               <div class="row" style="margin-top:10px"><button id="runCodeBtn" class="primary" onclick="submitCode()">Run & Submit</button></div>
+               ${(q.coding?.publicTestCases||[]).map((t,i)=>`<div><b>Sample ${i+1}</b><div class="testbox">Input:
+${esc(t.input)}
+
+Output:
+${esc(t.output)}</div></div>`).join('')}
+               ${q.answer.codingResult ? `<div class="panel" style="margin-top:10px;padding:10px"><b>${q.answer.codingResult.accepted?'Accepted ✓':'Not accepted'}</b><p class="muted">${q.answer.codingResult.passed}/${q.answer.codingResult.total} test cases passed · ${q.answer.codingResult.error ? esc(q.answer.codingResult.error) : 'All hidden tests passed'}</p></div>` : ''}
+             </div>`
+          : q.type === 'NUMERICAL'
+          ? `<input type="number" step="any" style="max-width:240px" placeholder="Type your answer" value="${q.answer.numericAnswer ?? ''}" onchange="save({numericAnswer: this.value===''?null:Number(this.value)})">`
+          : q.options.map((o) => `<label class="opt ${q.answer.selectedOptionIds.includes(o.id) ? 'sel' : ''}">
+              <input type="${q.type === 'MULTIPLE_CORRECT' ? 'checkbox' : 'radio'}" name="opt" ${q.answer.selectedOptionIds.includes(o.id) ? 'checked' : ''} onchange="pick('${o.id}')">
+              <span><b>${o.label}.</b> ${esc(o.text)}</span></label>`).join('')}
+        <div class="row" style="margin-top:16px">
+          <button style="flex:0 0 auto" onclick="save({clear:true})">Clear response</button>
+          <button style="flex:0 0 auto" onclick="save({markedForReview:true})">Mark for review</button>
+          <button style="flex:0 0 auto" ${current === 0 ? 'disabled' : ''} onclick="go(${current - 1})">Previous</button>
+          <button class="primary" style="flex:0 0 auto" ${current === S.questions.length - 1 ? 'disabled' : ''}
+            onclick="go(${current + 1})">Save & Next</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="proctor"><span class="badge ok">● Camera</span><span class="badge ok">● Microphone</span><span class="badge ok">● Monitoring</span></div><b style="font-size:14px">Question palette</b>
+        <div class="palette">
+          ${S.questions.map((item, i) => `<button class="pal ${item.answer.status} ${i === current ? 'current' : ''}"
+            onclick="go(${i})">${i + 1}</button>`).join('')}
+        </div>
+        <div class="legend">
+          <span class="l1">Answered</span><span class="l2">Not answered</span>
+          <span class="l3">Marked for review</span><span class="l4">Not visited</span>
+        </div>
+        ${S.attempt.violationCount > 0 ? `<p style="color:var(--bad);font-size:12px;margin-top:10px">
+          ⚠ ${S.attempt.violationCount} tab-switch warning${S.attempt.violationCount === 1 ? '' : 's'} recorded this attempt.</p>` : ''}
+        <button class="danger" style="width:100%;margin-top:14px" onclick="askSubmit()">Submit exam</button>
+      </div>
+    </div></div>${brandFoot}</div>`;
+
+  if (!ticker) ticker = setInterval(tick, 1000);
+  paintTimer();
+}
+
+function paintTimer() {
+  const left = S.attempt.remainingSeconds;
+  $('#timer').textContent = clock(Math.max(0, left));
+  $('#timer').classList.toggle('warn', left <= 60);
+}
+
+async function tick() {
+  if (!S || S.attempt.status !== 'IN_PROGRESS') return;
+  S.attempt.remainingSeconds = Math.max(0, S.attempt.remainingSeconds - 1);
+  paintTimer();
+  // The server clock decides; re-sync every 15 s and the moment time runs out.
+  if (++sync % 15 === 0 || S.attempt.remainingSeconds === 0) await refresh();
+}
+
+function askSubmit() {
+  const answered = S.questions.filter((q) => String(q.answer.status).startsWith('ANSWERED')).length;
+  $('#confirmText').textContent = `${answered} answered, ${S.questions.length - answered} left. You cannot return after submitting.`;
+  $('#confirm').showModal();
+}
+$('#confirmYes').onclick = async () => {
+  $('#confirm').close();
+  const state = await api('/api/student/attempts/' + S.attempt.id + '/submit', { method: 'POST' });
+  if (state) { S = state; showResult(); }
+};
+
+// ---------------------------------------------------------------- result
+function showResult() {
+  clearInterval(ticker); ticker = null; stopProctoring();
+  $('#timer').style.display = 'none';
+  $('#logoutBtn').style.display = 'inline-block';
+  $('#pwBtn').style.display = 'inline-block';
+  const r = S.result;
+
+  if (!r) {
+    $('#view').innerHTML = `<div class="panel"><h2>Paper submitted</h2>
+      <p class="muted">Your result will be shown once your admin releases it.</p>
+      <button class="primary" onclick="home()">Back to my exams</button></div>`;
+    return;
+  }
+
+  const cheatBanner = r.terminationReason === 'tab_switch'
+    ? `<p style="color:var(--bad)"><b>This exam was submitted automatically because you switched away from the tab too many times.</b></p>` : '';
+
+  $('#view').innerHTML = `
+    <div class="panel">
+      <p class="muted" style="margin:0">${r.status === 'AUTO_SUBMITTED' ? 'Time expired — submitted automatically' : 'Submitted'}</p>
+      ${cheatBanner}
+      <div class="score">${r.marksObtained} <span style="font-size:19px;color:var(--muted)">/ ${r.totalMarks}</span></div>
+      <p class="muted">${r.percentage}% · ${r.correctCount} correct · ${r.incorrectCount} wrong ·
+        ${r.unattemptedCount} unattempted · −${r.negativeMarks} negative</p>
+
+      <h3>Subject-wise</h3>
+      <table><tr><th>Subject</th><th>Score</th><th>Correct</th><th>Wrong</th><th>Left</th></tr>
+        ${r.subjectBreakdown.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.obtained} / ${s.total}</td>
+          <td>${s.correct}</td><td>${s.incorrect}</td><td>${s.unattempted}</td></tr>`).join('')}</table>
+
+      <h3>Solutions</h3>
+      <table><tr><th>Question</th><th>Result</th><th>Answer</th><th>Explanation</th></tr>
+        ${r.review.map((x) => `<tr><td>${esc(x.text)}</td>
+          <td><span class="pill ${x.verdict}">${x.verdict.toLowerCase()}</span> ${x.awarded}</td>
+          <td>${esc(x.correctAnswer)}</td><td class="muted">${esc(x.explanation)}</td></tr>`).join('')}</table>
+
+      <button class="primary" style="margin-top:14px" onclick="home()">Back to my exams</button>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- boot
+(async () => {
+  const me = await fetch('/api/me').then((r) => (r.ok ? r.json() : null));
+  if (!me) return (location.href = '/');
+  if (me.role === 'ADMIN') return (location.href = '/admin.html');
+  $('#who').textContent = me.name;
+  BRAND = await fetch('/api/branding').then(r => r.ok ? r.json() : BRAND).catch(() => BRAND);
+  if (BRAND.headerText) document.title = BRAND.headerText + ' — Exam Portal';
+  home();
+})();
+</script>
+</body>
+</html>
+

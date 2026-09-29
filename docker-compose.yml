@@ -1,0 +1,18 @@
+# Postgres for the full backend. Needs Docker Desktop.
+# Start:  docker compose up -d      Stop: docker compose down
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: exam-portal-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: exam_portal
+    ports:
+      - "5432:5432"
+    volumes:
+      - exam_portal_data:/var/lib/postgresql/data
+
+volumes:
+  exam_portal_data:
